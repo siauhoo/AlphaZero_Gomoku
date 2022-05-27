@@ -70,7 +70,7 @@ class PolicyValueNet():
             self.policy_value_net = Net(board_width, board_height).cuda()
         else:
             self.policy_value_net = Net(board_width, board_height)
-        self.optimizer = optim.Adam(self.policy_value_net.parameters(),
+        self.optimizer = optim.AdamW(self.policy_value_net.parameters(),
                                     weight_decay=self.l2_const)
 
         if model_file:
