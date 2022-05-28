@@ -13,7 +13,7 @@ from mcts_alphaZero import MCTSPlayer
 
 import time
 import os
-from policy_value_net_tensorflow import PolicyValueNet # Tensorflow
+from policy_value_net_pytorch import PolicyValueNet  # Pytorch
 
 
 
@@ -32,7 +32,7 @@ class AgentProcess(Process):
         self.batch_size = 512
         self.kl_targ = 0.02
         self.n_in_row = 5
-        self.n_playout = 600  # num of simulations for each move 深度mcst模拟次数
+        self.n_playout = 600
         self.c_puct = 5
         self.best_win_ratio=0.0
 

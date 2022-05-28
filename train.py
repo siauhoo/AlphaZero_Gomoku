@@ -12,11 +12,27 @@ from collections import defaultdict, deque
 from game import Board, Game
 from mcts_pure import MCTSPlayer as MCTS_Pure
 from mcts_alphaZero import MCTSPlayer
-from policy_value_net import PolicyValueNet  # Theano and Lasagne
-# from policy_value_net_pytorch import PolicyValueNet  # Pytorch
+#from policy_value_net import PolicyValueNet  # Theano and Lasagne
+from policy_value_net_pytorch import PolicyValueNet  # Pytorch
 # from policy_value_net_tensorflow import PolicyValueNet # Tensorflow
 # from policy_value_net_keras import PolicyValueNet # Keras
+import multiprocessing
+import time
+import os
 
+
+def sub_worker(self, collector, i):
+    t_start = time.time()
+    print("%d开始执行,进程号为%d" % (i, os.getpid()))
+    # random.random()随机生成0~1之间的浮点数
+    winner, play_data = self.game.start_self_play(self.mcts_player,
+                                                  temp=self.temp)
+    play_data = list(play_data)[:]
+    # augment the data
+    play_data = self.get_equi_data(play_data)
+    collector.extend(play_data)
+    t_stop = time.time()
+    print(i, "执行完毕，耗时%0.2f" % (t_stop - t_start))
 
 class TrainPipeline():
     def __init__(self, init_model=None):
@@ -37,7 +53,7 @@ class TrainPipeline():
         self.buffer_size = 10000
         self.batch_size = 512  # mini-batch size for training
         self.data_buffer = deque(maxlen=self.buffer_size)
-        self.play_batch_size = 1
+        self.play_batch_size = 40
         self.epochs = 5  # num of train_steps for each update
         self.kl_targ = 0.02
         self.check_freq = 50
@@ -82,16 +98,21 @@ class TrainPipeline():
                                     winner))
         return extend_data
 
+
+
     def collect_selfplay_data(self, n_games=1):
         """collect self-play data for training"""
-        for i in range(n_games):
-            winner, play_data = self.game.start_self_play(self.mcts_player,
-                                                          temp=self.temp)
-            play_data = list(play_data)[:]
-            self.episode_len = len(play_data)
-            # augment the data
-            play_data = self.get_equi_data(play_data)
-            self.data_buffer.extend(play_data)
+        manager = multiprocessing.Manager()  # 创建共享数据对象
+        collector = manager.list()
+        job_process = [multiprocessing.Process(target=sub_worker, args=(self,collector,item)) for item in
+                       range(n_games)]
+        for process in job_process:
+            process.start()
+        for process in job_process:
+            process.join()
+
+        self.data_buffer.extend(collector)
+        self.episode_len = len(self.data_buffer)
 
     def policy_update(self):
         """update the policy-value net"""
@@ -154,7 +175,7 @@ class TrainPipeline():
             winner = self.game.start_play(current_mcts_player,
                                           pure_mcts_player,
                                           start_player=i % 2,
-                                          is_shown=0)
+                                          is_shown=1)
             win_cnt[winner] += 1
         win_ratio = 1.0*(win_cnt[1] + 0.5*win_cnt[-1]) / n_games
         print("num_playouts:{}, win: {}, lose: {}, tie:{}".format(
@@ -173,19 +194,20 @@ class TrainPipeline():
                     loss, entropy = self.policy_update()
                 # check the performance of the current model,
                 # and save the model params
-                if (i+1) % self.check_freq == 0:
-                    print("current self-play batch: {}".format(i+1))
-                    win_ratio = self.policy_evaluate()
-                    self.policy_value_net.save_model('./current_policy.model')
-                    if win_ratio > self.best_win_ratio:
-                        print("New best policy!!!!!!!!")
-                        self.best_win_ratio = win_ratio
-                        # update the best_policy
-                        self.policy_value_net.save_model('./best_policy.model')
-                        if (self.best_win_ratio == 1.0 and
-                                self.pure_mcts_playout_num < 5000):
-                            self.pure_mcts_playout_num += 1000
-                            self.best_win_ratio = 0.0
+                print("current self-play batch: {}".format(i + 1))
+                win_ratio = self.policy_evaluate()
+                self.policy_value_net.save_model('./current_policy.model')
+                if win_ratio > self.best_win_ratio:
+                    print("New best policy!!!!!!!!")
+                    self.best_win_ratio = win_ratio
+                    # update the best_policy
+                    self.policy_value_net.save_model('./best_policy.model')
+                    if (self.best_win_ratio == 1.0 and
+                            self.pure_mcts_playout_num < 5000):
+                        self.pure_mcts_playout_num += 1000
+                        self.best_win_ratio = 0.0
+
+                i = i+self.play_batch_size
         except KeyboardInterrupt:
             print('\n\rquit')
 
